@@ -1,7 +1,12 @@
+"""
+This script can be used as skelton code to read the challenge train and test
+geojsons, to train a trivial model, and write data to the submission file.
+"""
 import geopandas as gpd
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 import numpy as np
+
 
 from sklearn.neighbors import KNeighborsClassifier
 
@@ -14,12 +19,6 @@ change_type_map = {'Demolition': 0, 'Road': 1, 'Residential': 2, 'Commercial': 3
 
 train_df = gpd.read_file('train.geojson', index_col=0)
 test_df = gpd.read_file('test.geojson', index_col=0)
-
-# Convert date columns to datetime format
-date_columns = [col for col in train_df.columns if "date" in col]
-for col in date_columns:
-    train_df[col] = pd.to_datetime(train_df[col], errors='coerce')  # Convert invalids to NaT
-    test_df[col] = pd.to_datetime(test_df[col], errors='coerce')
 
 ## Filtering column "mail_type"
 train_x = np.asarray(train_df[['geometry']].area)
