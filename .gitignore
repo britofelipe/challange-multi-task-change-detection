@@ -174,3 +174,4 @@ cython_debug/
 # Challange
 test.geojson
 train.geojson
+submission.csv
