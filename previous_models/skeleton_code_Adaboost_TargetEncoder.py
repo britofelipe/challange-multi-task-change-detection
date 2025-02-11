@@ -16,8 +16,8 @@ change_type_map = {
 }
 
 # ----------------- Step 2: Read GeoJSON Files -----------------
-train_df = gpd.read_file('train.geojson', index_col=0)
-test_df = gpd.read_file('test.geojson', index_col=0)
+train_df = gpd.read_file('train.geojson')
+test_df = gpd.read_file('test.geojson')
 
 # ----------------- Step 3: Ensure CRS Consistency -----------------
 train_df = train_df.to_crs(epsg=3857)  # Web Mercator projection
