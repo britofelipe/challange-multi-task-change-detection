@@ -20,20 +20,25 @@ change_type_map = {
 }
 
 # ----------------- Step 2: Read GeoJSON Files -----------------
+print("Reading GeoJSON files...")
 train_df = gpd.read_file('train.geojson')
 test_df = gpd.read_file('test.geojson')
+print("GeoJSON files read successfully!")
 
 # ----------------- Step 3: Ensure CRS Consistency -----------------
 train_df = train_df.to_crs(epsg=3857)
 test_df = test_df.to_crs(epsg=3857)
 
 # Remove any invalid (null) geometries
+print("Removing invalid geometries...")
 train_df = train_df[train_df["geometry"].notnull()]
 test_df = test_df[test_df["geometry"].notnull()]
 train_df = train_df[train_df["geometry"].is_valid]
 test_df = test_df[test_df["geometry"].is_valid]
 
 # ----------------- Step 4: Feature Engineering -----------------
+print("Performing feature engineering...")
+
 train_df["area"] = train_df["geometry"].area
 train_df["centroid_x"] = train_df["geometry"].centroid.x
 train_df["centroid_y"] = train_df["geometry"].centroid.y
@@ -60,6 +65,7 @@ test_df["bounding_height"] = (
 test_df["aspect_ratio"] = test_df["bounding_width"] / np.maximum(test_df["bounding_height"], 1e-9)
 test_df["circularity"] = (4 * np.pi * test_df["area"]) / (test_df["perimeter"] ** 2)
 
+print("Feature engineering complete!")
 # ----------------- Step 5: Check Missing/Invalid Data -----------------
 print("=== Missing Value Counts (Train) ===")
 print(train_df.isna().sum())
@@ -143,8 +149,10 @@ test_x = np.nan_to_num(test_x, nan=0.0, posinf=1e10, neginf=-1e10)
 # e.g. If you want to log-transform these
 log_features = ["area", "perimeter", "bounding_width", "bounding_height"]
 for col in log_features:
-    train_x[col] = np.log1p(np.maximum(train_x[col], 1e-9))  
-    test_x[col] = np.log1p(np.maximum(test_x[col], 1e-9))
+    if col in train_x:
+        train_x[col] = np.log1p(np.maximum(train_x[col], 1e-9))  
+    if col in test_x:
+        test_x[col] = np.log1p(np.maximum(test_x[col], 1e-9))
 
 # ----------------- Step 12: Standardize Features -----------------
 scaler = StandardScaler()
@@ -152,6 +160,8 @@ train_x_scaled = scaler.fit_transform(train_x)
 test_x_scaled = scaler.transform(test_x)
 
 # ----------------- Step 13: Feature Selection (SelectKBest) -----------------
+print("Performing feature selection with KBest...")
+
 selector = SelectKBest(score_func=f_classif, k=14)  
 train_x_selected = selector.fit_transform(train_x_scaled, train_y)  
 test_x_selected = selector.transform(test_x_scaled)
@@ -160,6 +170,7 @@ selected_feature_indices = selector.get_support(indices=True)
 selected_features = [feature_cols[i] for i in selected_feature_indices]
 print(f"Selected Features: {selected_features}")
 
+print("Feature selection complete!")
 # ===========================================================================
 # =           NOW, REINSERT THE MODEL TRAINING / EVALUATION CODE            =
 # ===========================================================================
@@ -175,13 +186,17 @@ gbm_model = GradientBoostingClassifier(
     subsample=subsample
 )
 
-# Train
+print("Training Gradient Boosting Model...")
 gbm_model.fit(train_x_selected, train_y)
+print("Training complete!")
 
 # Predict
+print("Making predictions...")
 pred_y = gbm_model.predict(test_x_selected)
+print("Predictions made!")
 
 # Save results
+print("Saving predictions to CSV...")
 pred_df = pd.DataFrame(pred_y, columns=['change_type'])
 pred_df.to_csv("gradient_boosting_submission.csv", index=True, index_label='Id')
 

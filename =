@@ -1,0 +1,10 @@
+Name: xgboost
+Version: 2.1.4
+Summary: XGBoost Python Package
+Home-page: 
+Author: 
+Author-email: Hyunsu Cho <chohyu01@cs.washington.edu>, Jiaming Yuan <jm.yuan@outlook.com>
+License: Apache-2.0
+Location: /Users/felipebrito/Workspace/challange-multi-task-change-detection/.venv/lib/python3.9/site-packages
+Requires: numpy, scipy
+Required-by: 
