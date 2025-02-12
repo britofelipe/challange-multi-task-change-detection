@@ -1,13 +1,60 @@
 import geopandas as gpd
 import pandas as pd
 import numpy as np
+from datetime import datetime
 import matplotlib.pyplot as plt
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.metrics import f1_score
+from sklearn.utils.class_weight import compute_class_weight
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense, LSTM, concatenate, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
+import optuna
+import warnings
+warnings.filterwarnings('ignore')
 
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.feature_selection import SelectKBest, f_classif
+def calculate_temporal_intervals(df, date_cols):
+    for i in range(len(date_cols)-1):
+        df[f'days_between_{i}_{i+1}'] = (df[date_cols[i+1]] - df[date_cols[i]]).dt.days
+    return df
+
+def extract_sequence_features(status_cols):
+    # Implement status transition matrix and sequence encoding
+    pass
+
+class GeoDataLoader:
+    def __init__(self, train_path, test_path):
+        self.train = gpd.read_file(train_path)
+        self.test = gpd.read_file(test_path)
+        self._preprocess()
+    
+    def _preprocess(self):
+        # CRS normalization and geometry validation
+        self.train = self.train.to_crs(epsg=3857).dropna(subset=['geometry'])
+        self.test = self.test.to_crs(epsg=3857).dropna(subset=['geometry'])
+        
+        # Advanced feature engineering
+        for df in [self.train, self.test]:
+            # Geometric features
+            df['compactness'] = 4 * np.pi * df.geometry.area / (df.geometry.length**2)
+            df['hull_ratio'] = df.geometry.area / df.geometry.convex_hull.area
+            
+            # Temporal features
+            date_cols = [f'date{i}' for i in range(5)]
+            df[date_cols] = df[date_cols].apply(pd.to_datetime)
+            df = calculate_temporal_intervals(df, date_cols)
+            
+            # Spectral features for all dates
+            for d in range(5):
+                for band in ['red', 'green', 'blue']:
+                    df[f'spectral_ratio_{d}_{band}'] = df[f'img_{band}_mean_date{d}'] / \
+                                                      (df[f'img_{band}_std_date{d}'] + 1e-9)
+
 
 # ----------------- Step 1: Define Change Type Mapping -----------------
 change_type_map = {
@@ -66,6 +113,9 @@ test_df["aspect_ratio"] = test_df["bounding_width"] / np.maximum(test_df["boundi
 test_df["circularity"] = (4 * np.pi * test_df["area"]) / (test_df["perimeter"] ** 2)
 
 print("Feature engineering complete!")
+
+
+
 # ----------------- Step 5: Check Missing/Invalid Data -----------------
 print("=== Missing Value Counts (Train) ===")
 print(train_df.isna().sum())
