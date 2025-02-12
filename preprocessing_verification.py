@@ -58,6 +58,8 @@ test_df["bounding_height"] = (
 )
 test_df["aspect_ratio"] = test_df["bounding_width"] / np.maximum(test_df["bounding_height"], 1e-9)
 test_df["circularity"] = (4 * np.pi * test_df["area"]) / (test_df["perimeter"] ** 2)
+train_df.drop(columns=["geometry"], inplace=True)
+test_df.drop(columns=["geometry"], inplace=True)
 
 # Pick sample rows for debugging
 sample_rows = train_df.sample(3, random_state=42).index
@@ -66,7 +68,7 @@ print(train_df.loc[sample_rows, ["change_type", "urban_type", "geography_type", 
 # Print after feature engineering
 print("\n===== AFTER FEATURE ENGINEERING =====")
 print(train_df.loc[sample_rows, ["area", "centroid_x", "centroid_y", "perimeter"]])
-
+print(train_df.columns)
 # ----------------- Step 5: Convert Labels -----------------
 train_y = train_df['change_type'].map(change_type_map).astype(int)
 
@@ -112,7 +114,9 @@ test_df = pd.concat([test_df, test_urban_df, test_geo_df], axis=1).drop(
 )
 print("\n===== AFTER MULTI-LABEL ENCODING =====")
 print(train_df.loc[sample_rows, list(train_urban_df.columns) + list(train_geo_df.columns)])
-
+# Save after multi-label encoding
+train_df.loc[sample_rows, urban_cols + geo_cols].to_csv("multi_label_encoding_sample.csv")
+print(train_df.columns)
 # ----------------- Step 7: Date Handling (Example) -----------------
 s = ["date0", "date1", "date2", "date3", "date4"]
 
@@ -135,6 +139,7 @@ for col in s:
     test_df.drop(columns=[col], inplace=True)
 print("\n===== AFTER DATE HANDLING =====")
 print(train_df.loc[sample_rows, ["date0_year", "date0_month", "date0_day"]])
+train_df.loc[sample_rows, ["date0_year", "date0_month", "date0_day"]].to_csv("date_handling_sample.csv")
 # ----------------- Step 8: (Optional) Log-transform Certain Numerical Features -----------------
 log_features = ["area", "perimeter", "bounding_width", "bounding_height"]
 for col in log_features:
@@ -168,14 +173,17 @@ for col in ["change_status_date1", "change_status_date2", "change_status_date3",
 
 # ----------------- Step 9: Build Final Feature List -----------------
 drop_cols = ["geometry", "change_type"]
-feature_cols = [c for c in train_df.columns if c not in drop_cols]
+feature_cols =  [col for col in train_df.columns if "geometry" not in col]
+print(feature_cols)
+print(train_df)
 # ----------------- Step 5: Check Missing/Invalid Data -----------------
 print("=== Missing Value Counts (Train) ===")
 print(train_df.isna().sum())
 print("\n=== Negative or Zero Counts for Key Geometries (Train) ===")
 print((train_df[["area", "perimeter", "bounding_width", "bounding_height"]] <= 0).sum())
-train_x = train_df[feature_cols]
-test_x = test_df[feature_cols]
+print(feature_cols)
+train_x = train_df
+test_x = test_df
 
 print("\n===== AFTER LOG TRANSFORMATION =====")
 print(train_df.loc[sample_rows, feature_cols])
@@ -191,22 +199,47 @@ train_x = np.nan_to_num(train_x, nan=0.0, posinf=1e10, neginf=-1e10)
 test_x = np.nan_to_num(test_x, nan=0.0, posinf=1e10, neginf=-1e10)
 
 # ----------------- Step 11: Standardize Features -----------------
+# Identify date-related columns (exclude from standardization)
+print(feature_cols)
+print(train_x)
+train_df = pd.DataFrame(train_x, columns=feature_cols)
+train_df = train_df[[col for col in feature_cols if "change_type" not in col]]
+test_df = pd.DataFrame(test_x, columns=[col for col in feature_cols if "change_type" not in col])
+feature_cols =  [col for col in train_df.columns if "_day" in col or "_month" in col or "_year" in col or "geo_" in col or "urban_" in col or "img_" in col or "geometry" in col or "change_status" in col or "index" in col]
+
+# Select columns for standardization (exclude date-related columns)
+standardized_cols = [col for col in train_df.columns if col not in feature_cols]
+
+# Standardize only the selected columns
 scaler = StandardScaler()
-train_x_scaled = scaler.fit_transform(train_x)
-test_x_scaled = scaler.transform(test_x)
+train_x_scaled_standardized = scaler.fit_transform(train_df[standardized_cols])
+test_x_scaled_standardized = scaler.transform(test_df[[col for col in standardized_cols if "change_type" not in col]])
+
+# Convert back to DataFrame
+train_x_scaled_df = pd.DataFrame(train_x_scaled_standardized, columns=standardized_cols, index=train_df.index)
+test_x_scaled_df = pd.DataFrame(test_x_scaled_standardized, columns=standardized_cols, index=test_df.index)
+print(train_x_scaled_df.columns)
+# Concatenate with date-related columns (which remain unchanged)
+train_x_scaled = pd.concat([train_x_scaled_df, train_df[feature_cols]], axis=1)
+test_x_scaled = pd.concat([test_x_scaled_df, test_df[[col for col in feature_cols if "change_type" not in col]]], axis=1)
+print(train_x_scaled.columns)
+print(feature_cols)
 print("\n===== AFTER STANDARDIZATION =====")
-print(train_x_scaled[sample_rows])
+#print(train_x_scaled[sample_rows])
+pd.DataFrame(train_x_scaled).loc[sample_rows].to_csv("standardization_sample.csv")
 # ----------------- Step 12: (Optional) Feature Selection -----------------
 selector = SelectKBest(score_func=f_classif, k=35)
 train_x_selected = selector.fit_transform(train_x_scaled, train_y)
 test_x_selected = selector.transform(test_x_scaled)
 
+feature_cols =  [col for col in train_x_scaled.columns if "geometry" not in col]
 selected_feature_indices = selector.get_support(indices=True)
 selected_features = [feature_cols[i] for i in selected_feature_indices]
 print("\nSelected Features (SelectKBest):")
 print(selected_features)
 print("\n===== FINAL =====")
 print(train_x_selected[sample_rows])
+pd.DataFrame(train_x_selected).loc[sample_rows].to_csv("feature_selection_sample.csv")
 # ----------------- Step 13: Model Training (Gradient Boosting) -----------------
 num_estimators = 100
 learning_rate = 0.03
@@ -246,3 +279,35 @@ plt.ylabel("Loss")
 plt.title("Gradient Boosting Training Loss Over Time")
 plt.legend()
 plt.show()
+
+
+def apply_pca(train_x_scaled, test_x_scaled):
+    # Define all feature columns excluding 'change_type' (target variable)
+    feature_cols = [col for col in train_x_scaled.columns if col != "change_type"]
+
+    # Apply PCA for dimensionality reduction (reduce to 35 principal components)
+    n_components = 35
+    pca = PCA(n_components=n_components)
+
+    # Fit PCA on training data and transform both train and test datasets
+    train_x_selected = pca.fit_transform(train_x_scaled[feature_cols])
+    test_x_selected = pca.transform(test_x_scaled[feature_cols])
+
+    # Print explained variance ratio to check how much variance is retained
+    explained_variance = np.sum(pca.explained_variance_ratio_)
+    print(f"\nTotal Explained Variance by {n_components} Components: {explained_variance:.4f}")
+
+    # Create feature names for PCA components
+    selected_features = [f"PC{i+1}" for i in range(n_components)]
+    print("\nSelected PCA Features:", selected_features)
+
+    # Convert back to DataFrame with PCA components
+    train_x_selected_df = pd.DataFrame(train_x_selected, columns=selected_features, index=train_x_scaled.index)
+    test_x_selected_df = pd.DataFrame(test_x_selected, columns=selected_features, index=test_x_scaled.index)
+
+    # Convert to NumPy arrays for model training
+    train_x_selected = train_x_selected_df.values
+    test_x_selected = test_x_selected_df.values
+    return train_x_scaled, test_x_scaled
+
+#train_x_selected,test_x_selected = apply_pca(train_x_scaled, test_x_scaled)
