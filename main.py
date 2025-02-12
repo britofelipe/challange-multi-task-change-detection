@@ -93,8 +93,17 @@ class CompetitionPipeline:
         print(f"Test size validation passed: {TEST_SIZE} rows")
         
     def _handle_missing_values(self, df):
+        # Handle numeric features
         num_cols = df.select_dtypes(include=np.number).columns
         df[num_cols] = df[num_cols].fillna(df[num_cols].median())
+        
+        # Handle geometric features that might have NaNs from calculations
+        geo_features = ['area', 'perimeter', 'compactness']
+        df[geo_features] = df[geo_features].fillna(0)
+        
+        # Handle infinite values that might result from division operations
+        df.replace([np.inf, -np.inf], 0, inplace=True)
+        
         return df
 
     def prepare_data(self):
@@ -102,6 +111,10 @@ class CompetitionPipeline:
         # Process dataframes
         self.train = self.fe.process(self.train)
         self.test = self.fe.process(self.test)
+        
+        # Handle missing values
+        self.train = self._handle_missing_values(self.train)
+        self.test = self._handle_missing_values(self.test)
         
         # Handle categorical features
         if 'urban_geo_interaction' in self.train.columns:
@@ -159,54 +172,65 @@ class CompetitionPipeline:
 
     def train_ensemble(self):
         print("\nTraining model ensemble...")
+        # Data validation
+        if np.isnan(self.X_train).any() or np.isnan(self.X_test).any():
+            raise ValueError("NaNs detected in preprocessed data")
+        if np.isinf(self.X_train).any() or np.isinf(self.X_test).any():
+            raise ValueError("Infinite values detected in preprocessed data")
+    
+    # Rest of the training code...
+        print("\nTraining model ensemble...")
         # Class weights
         class_weights = compute_class_weight('balanced', 
-                                           classes=np.unique(self.y_train), 
-                                           y=self.y_train)
+                                        classes=np.unique(self.y_train), 
+                                        y=self.y_train)
         
         # Model configurations
         self.models = [
-            ('XGBoost', XGBClassifier(
-                objective='multi:softmax',
-                n_estimators=1000,
-                learning_rate=0.05,
-                max_depth=8,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
-                scale_pos_weight=class_weights,
-                random_state=RANDOM_STATE,
-                eval_metric='mlogloss',
-                early_stopping_rounds=50
-            )),
-            
-            ('LightGBM', LGBMClassifier(
-                objective='multiclass',
-                n_estimators=1000,
-                learning_rate=0.05,
-                max_depth=8,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
-                class_weight='balanced',
-                random_state=RANDOM_STATE,
-                early_stopping_round=50
-            )),
-            
-            ('CatBoost', CatBoostClassifier(
-                loss_function='MultiClass',
-                iterations=1000,
-                learning_rate=0.05,
-                depth=8,
-                subsample=0.8,
-                random_strength=0.1,
-                verbose=False,
-                class_weights=class_weights,
-                random_state=RANDOM_STATE,
-                early_stopping_rounds=50
-            )),
+            # ('XGBoost', XGBClassifier(
+            #     objective='multi:softmax',
+            #     n_estimators=1000,
+            #     learning_rate=0.05,
+            #     max_depth=8,
+            #     subsample=0.8,
+            #     colsample_bytree=0.8,
+            #     reg_alpha=0.1,
+            #     reg_lambda=0.1,
+            #     scale_pos_weight=class_weights,
+            #     random_state=RANDOM_STATE,
+            #     eval_metric='mlogloss',
+            #     early_stopping_rounds=50,
+            #     verbosity=0  
+            # )),
+
+            # ('LightGBM', LGBMClassifier(
+            #     objective='multiclass',
+            #     n_estimators=1000,
+            #     learning_rate=0.05,
+            #     max_depth=8,
+            #     subsample=0.8,
+            #     colsample_bytree=0.8,
+            #     reg_alpha=0.1,
+            #     reg_lambda=0.1,
+            #     class_weight='balanced',
+            #     random_state=RANDOM_STATE,
+            #     early_stopping_round=50,
+            #     verbosity=-1 
+            # )),
+
+            # ('CatBoost', CatBoostClassifier(
+            #     loss_function='MultiClass',
+            #     iterations=1000,
+            #     learning_rate=0.05,
+            #     depth=8,
+            #     subsample=0.8,
+            #     bootstrap_type='Bernoulli', 
+            #     random_strength=0.1,
+            #     silent=True,
+            #     class_weights=class_weights,
+            #     random_state=RANDOM_STATE,
+            #     early_stopping_rounds=50
+            # )),
 
             ('KNN', KNeighborsClassifier(
                 n_neighbors=5,
@@ -232,13 +256,23 @@ class CompetitionPipeline:
             for model_idx, (model_name, model) in enumerate(self.models):
                 print(f"\nTraining {model_name} - Fold {fold+1}/{N_FOLDS}")
 
-                if model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
+                if model_name == 'XGBoost':
+                    model.fit(
+                        X_tr, y_tr,
+                        eval_set=[(X_val, y_val)]
+                    )
+                elif model_name == 'LightGBM':
                     model.fit(
                         X_tr, y_tr,
                         eval_set=[(X_val, y_val)],
-                        verbose=False
+                        eval_names=['validation']
                     )
-                else:  # KNN e RadiusNeighbors
+                elif model_name == 'CatBoost':
+                    model.fit(
+                        X_tr, y_tr,
+                        eval_set=(X_val, y_val)
+                    )
+                else:
                     model.fit(X_tr, y_tr)
                 
                 # Generate predictions
