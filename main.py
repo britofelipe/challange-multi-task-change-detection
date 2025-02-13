@@ -232,16 +232,17 @@ class CompetitionPipeline:
             #     early_stopping_rounds=50
             # )),
 
-            ('KNN', KNeighborsClassifier(
-                n_neighbors=5,
-                weights='distance',
-                metric='minkowski'
-            )),
+            # ('KNN', KNeighborsClassifier(
+            #     n_neighbors=5,
+            #     weights='distance',
+            #     metric='minkowski'
+            # )),
 
             ('RadiusNeighbors', RadiusNeighborsClassifier(
                 radius=1.0,
                 weights='distance',
-                metric='minkowski'
+                metric='minkowski',
+                outlier_label='most_frequent'
             ))
         ]
         

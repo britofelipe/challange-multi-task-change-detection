@@ -178,3 +178,4 @@ train.geojson
 train_sample.geojson
 test_sample.geojson
 submission*
+catboost_info/
