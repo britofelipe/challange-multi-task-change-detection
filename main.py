@@ -9,7 +9,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.neighbors import KNeighborsClassifier, RadiusNeighborsClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from catboost import CatBoostClassifier
+#from catboost import CatBoostClassifier
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -146,7 +146,10 @@ class CompetitionPipeline:
         # Explicitly name all columns as strings
         self.X_train.columns = self.X_train.columns.astype(str)
         self.X_test.columns = self.X_test.columns.astype(str)
-        
+        feature_cols = self.X_train.columns
+
+        self._handle_missing_values(self.X_train)
+        self._handle_missing_values(self.X_test)
         # Normalization
         print("Applying feature scaling...")
         self.X_train = self.scaler.fit_transform(self.X_train)
@@ -156,6 +159,9 @@ class CompetitionPipeline:
         if 'change_type' in self.train.columns:
             self.y_train = self.train['change_type'].map(change_type_map)
             print("Class distribution:\n", self.y_train.value_counts())
+        
+        X_train_df = pd.DataFrame(self.X_train, columns=feature_cols, index=self.train.index)
+        X_train_df.to_csv("X_train.csv", index=True)
 
     def train_ensemble(self):
         print("\nTraining model ensemble...")
@@ -194,19 +200,6 @@ class CompetitionPipeline:
                 random_state=RANDOM_STATE,
                 early_stopping_round=50
             )),
-            
-            ('CatBoost', CatBoostClassifier(
-                loss_function='MultiClass',
-                iterations=1000,
-                learning_rate=0.05,
-                depth=8,
-                subsample=0.8,
-                random_strength=0.1,
-                verbose=False,
-                class_weights=class_weights,
-                random_state=RANDOM_STATE,
-                early_stopping_rounds=50
-            )),
 
             ('KNN', KNeighborsClassifier(
                 n_neighbors=5,
@@ -215,16 +208,16 @@ class CompetitionPipeline:
             )),
 
             ('RadiusNeighbors', RadiusNeighborsClassifier(
-                radius=1.0,
+                radius=3.0,
                 weights='distance',
                 metric='minkowski'
             ))
         ]
-        
+
         # Cross-validation setup
         skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=RANDOM_STATE)
         self.test_preds = np.zeros((len(self.models), TEST_SIZE, len(change_type_map)))
-        
+        print("Shape of train_x:", self.X_train.shape)
         for fold, (train_idx, val_idx) in enumerate(skf.split(self.X_train, self.y_train)):
             X_tr, X_val = self.X_train[train_idx], self.X_train[val_idx]
             y_tr, y_val = self.y_train.iloc[train_idx], self.y_train.iloc[val_idx]
