@@ -78,6 +78,16 @@ def extract_geometric_features(df):
     df.loc[valid_geometry, "convexity"] = df.loc[valid_geometry, "geometry"].apply(
         lambda g: g.area / g.convex_hull.area if g else 0
     )
+    # circularity
+    df.loc[valid_geometry, "circularity"] = (
+        (4 * np.pi * df.loc[valid_geometry, "area"]) / np.maximum(df.loc[valid_geometry, "perimeter"] ** 2, 1e-9)
+    )
+
+    # Retangulation (area of the polygon compared to the area of the bounding rectangle)
+    df.loc[valid_geometry, "rectangularity"] = df.loc[valid_geometry, "area"] / (
+        df.loc[valid_geometry, "bounding_width"] * df.loc[valid_geometry, "bounding_height"] + 1e-9
+    )
+
 
     # Momentos de Hu (mantém as features existentes e adiciona novos momentos)
     def hu_moments(polygon):
@@ -116,7 +126,7 @@ def extract_geometric_features(df):
 
 extract_geometric_features(train_df)
 extract_geometric_features(test_df)
-
+print("---------DEU CERTO AS GEOMETRICAS---------")
 def extract_spectral_features(df):
     """Adiciona índices espectrais do segundo código ao primeiro código."""
     for d in range(5):
@@ -131,6 +141,16 @@ def extract_spectral_features(df):
         if f'img_green_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
             df[f'NDWI_date{d}'] = (df[f'img_green_mean_date{d}'] - df[f'img_blue_mean_date{d}']) / \
                                   (df[f'img_green_mean_date{d}'] + df[f'img_blue_mean_date{d}'] + 1e-9)
+        # SAVI (Soil Adjusted Vegetation Index)
+        if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
+            L = 0.5  # Parameter for moderate vegetation
+            df[f'SAVI_date{d}'] = ((df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}']) * (1 + L)) / \
+                                  (df[f'img_red_mean_date{d}'] + df[f'img_blue_mean_date{d}'] + L + 1e-9)
+
+        # EVI (Enhanced Vegetation Index)
+        if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns and f'img_green_mean_date{d}' in df.columns:
+            df[f'EVI_date{d}'] = 2.5 * (df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}']) / \
+                                (df[f'img_red_mean_date{d}'] + 6 * df[f'img_blue_mean_date{d}'] - 7.5 * df[f'img_green_mean_date{d}'] + 1 + 1e-9)
 
 extract_spectral_features(train_df)  
 extract_spectral_features(test_df) 
@@ -285,6 +305,9 @@ def sort_dates_and_compute_differences(df):
     df["total_days"] = (df[col_last].fillna(df[col_last].median()) - df[col_first].fillna(df[col_first].median())).dt.days
     df["total_days"] = df["total_days"].fillna(df["total_days"].median())
 
+    # Tempo desde a última mudança
+    df["days_since_last_change"] = (df[date_cols[-1]] - df[date_cols[0]]).dt.days
+
     # Taxa de mudança ao longo do tempo
     df["change_rate"] = df["change_frequency"] / (df["total_days"] + 1e-9)
 
@@ -304,6 +327,10 @@ def sort_dates_and_compute_differences(df):
     for i, col in enumerate(date_cols):
         df[f'month_date{i}'] = df[col].dt.month
         df[f'month_date{i}'] = df[f'month_date{i}'].fillna(df[f'month_date{i}'].median())
+    # Sazonalidade - mês do primeiro e último evento
+    df["month_start"] = df[date_cols[0]].dt.month
+    df["month_end"] = df[date_cols[-1]].dt.month
+    df.fillna(0, inplace=True)
 
 sort_dates_and_compute_differences(train_df)
 sort_dates_and_compute_differences(test_df)
@@ -455,7 +482,22 @@ standardized_cols = [col for col in train_df.columns if col not in exclude_cols 
 scaler = StandardScaler()
 train_x_scaled_df = pd.DataFrame(scaler.fit_transform(train_df[standardized_cols]), columns=standardized_cols, index=train_df.index)
 test_x_scaled_df = pd.DataFrame(scaler.transform(test_df[standardized_cols]), columns=standardized_cols, index=test_df.index)
+#-------------------------------------------------
+# Criar função para aplicar Winsorization
+def clip_outliers(df, lower_percentile=0.01, upper_percentile=0.99):
+    df_clipped = df.copy()
+    for col in df_clipped.columns:
+        lower = df_clipped[col].quantile(lower_percentile)
+        upper = df_clipped[col].quantile(upper_percentile)
+        df_clipped[col] = np.clip(df_clipped[col], lower, upper)
+    return df_clipped
 
+# Aplicar Winsorization aos dados normalizados
+train_x_scaled_df = clip_outliers(train_x_scaled_df)
+test_x_scaled_df = clip_outliers(test_x_scaled_df)
+
+print("Outliers tratados com Winsorization")
+#-------------------------------------------------
 train_x_scaled = pd.concat([train_x_scaled_df, train_df[exclude_cols + ["change_type"]]], axis=1)
 test_x_scaled = pd.concat([test_x_scaled_df, test_df[exclude_cols]], axis=1)
 
