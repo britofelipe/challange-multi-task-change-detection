@@ -83,9 +83,9 @@ def train_models():
             )),
 
         ('KNN', KNeighborsClassifier(
-            n_neighbors=45,
-            weights='uniform',
-            metric='manhattan'
+            n_neighbors=5,
+            weights='distance',
+            metric='minkowski'
         ))
     ]
 
