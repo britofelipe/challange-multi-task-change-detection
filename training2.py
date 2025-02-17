@@ -7,7 +7,6 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.neighbors import KNeighborsClassifier
 import re
-from catboost import CatBoostClassifier
 
 # Constants
 N_FOLDS = 5
@@ -34,7 +33,7 @@ def train_models():
         df.columns = [re.sub(r'[^a-zA-Z0-9_]', '_', col) for col in df.columns]
         return df
 
-    # Apply this to both train and test datasets **before training**
+    # Apply this to both train and test datasets *before training*
     X_train = clean_feature_names(X_train)
     X_test = clean_feature_names(X_test)
 
@@ -50,15 +49,15 @@ def train_models():
             objective='multi:softmax',
             n_estimators=N_ESTIMATORS,
             learning_rate=0.05,
-            max_depth=8,
+            max_depth=12,#mudei so aqui 
             subsample=0.8,
             colsample_bytree=0.8,
-            reg_alpha=0.1,
-            reg_lambda=0.1,
+            reg_alpha=0.3,
+            reg_lambda=0.15,
             scale_pos_weight=class_weights,
             random_state=RANDOM_STATE,
             eval_metric='mlogloss',
-            early_stopping_rounds=50
+            early_stopping_rounds=70
         )),
             
         ('LightGBM', LGBMClassifier(##mudei aqui para o modelo que tava no meu. ass:vitoria
@@ -70,11 +69,11 @@ def train_models():
                 min_gain_to_split=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
-                reg_alpha=0.1,
-                reg_lambda=0.1,
+                reg_alpha=0.3,
+                reg_lambda=0.15,
                 class_weight='balanced',
                 random_state=RANDOM_STATE,
-                early_stopping_round=50,
+                early_stopping_round=63,
                 n_jobs=-1,  # Usa todos os núcleos disponíveis sem autodetecção
                 min_child_samples=50,  # Evita divisões muito pequenas e melhora generalização
                 verbosity=-1,
@@ -197,12 +196,12 @@ def generate_final_submission(test_preds, train_preds, X_test, y_train):
     submission_test.to_csv(filename_test, index=False)
     print(f"✅ Final ensemble test submission saved: {filename_test}")
 
-    # Save final train predictions
-    filename_train = f"train_ensemble_preds_{TIMESTAMP}.csv"
-    submission_train = pd.DataFrame({'Id': np.arange(len(y_train)), 'change_type': final_preds_train})
-    submission_train.to_csv(filename_train, index=False)
-    print(f"✅ Final ensemble train predictions saved: {filename_train}")
+    # # Save final train predictions
+    # filename_train = f"train_ensemble_preds_{TIMESTAMP}.csv"
+    # submission_train = pd.DataFrame({'Id': np.arange(len(y_train)), 'change_type': final_preds_train})
+    # submission_train.to_csv(filename_train, index=False)
+    # print(f"✅ Final ensemble train predictions saved: {filename_train}")
 
 # Run training function
-if __name__ == "__main__":
+if _name_ == "_main_":
     train_models()
