@@ -2,11 +2,16 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import shapely
+import cv2
+
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.preprocessing import StandardScaler, MultiLabelBinarizer
-from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.preprocessing import StandardScaler, MultiLabelBinarizer,RobustScaler, QuantileTransformer
+from sklearn.feature_selection import SelectKBest, f_classif, RFE
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import RFE
 from sklearn.model_selection import GridSearchCV
@@ -87,7 +92,33 @@ def extract_geometric_features(df):
     df.loc[valid_geometry, "rectangularity"] = df.loc[valid_geometry, "area"] / (
         df.loc[valid_geometry, "bounding_width"] * df.loc[valid_geometry, "bounding_height"] + 1e-9
     )
+    #---------------new-------------------
 
+    def compute_eccentricity(polygon):
+        """Calcula a excentricidade de um polígono com base no retângulo mínimo rotacionado"""
+        try:
+            if polygon.is_empty:
+                return 0
+            min_rect = polygon.minimum_rotated_rectangle
+            coords = list(min_rect.exterior.coords)
+            
+            # Calcular os comprimentos das duas dimensões do retângulo mínimo
+            edge_lengths = [np.linalg.norm(np.array(coords[i]) - np.array(coords[i - 1])) for i in range(1, len(coords))]
+            width, height = sorted(edge_lengths)[:2]  # Pegamos os dois menores lados
+
+            return width / height if height > 0 else 0  # Excentricidade = largura / altura
+        except:
+            return 0
+
+    df.loc[valid_geometry, "eccentricity"] = df.loc[valid_geometry, "geometry"].apply(compute_eccentricity)
+
+    df.loc[valid_geometry, "solidity"] = df.loc[valid_geometry, "area"] / df.loc[valid_geometry, "geometry"].convex_hull.area
+
+    df.loc[valid_geometry, "roughness"] = df.loc[valid_geometry, "perimeter"] / df.loc[valid_geometry, "bounding_diagonal"]
+
+    df.loc[valid_geometry, "orientation"] = df.loc[valid_geometry, "geometry"].apply(
+    lambda g: g.minimum_rotated_rectangle.exterior.coords.xy[0][0] if g else 0)
+    #------------
 
     # Momentos de Hu (mantém as features existentes e adiciona novos momentos)
     def hu_moments(polygon):
@@ -126,35 +157,70 @@ def extract_geometric_features(df):
 
 extract_geometric_features(train_df)
 extract_geometric_features(test_df)
-print("---------DEU CERTO AS GEOMETRICAS---------")
+
 def extract_spectral_features(df):
-    """Adiciona índices espectrais do segundo código ao primeiro código."""
-    for d in range(5):
+    """Adiciona índices espectrais para análise de vegetação, umidade e mudanças temporais."""
+
+    for d in range(5):  # Loop pelas 5 datas disponíveis
+        # NDVI (Normalized Difference Vegetation Index)
         if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
             df[f'NDVI_date{d}'] = (df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}']) / \
                                   (df[f'img_red_mean_date{d}'] + df[f'img_blue_mean_date{d}'] + 1e-9)
 
+        # NDBI (Normalized Difference Built-up Index) - Identifica áreas urbanas
         if f'img_red_mean_date{d}' in df.columns and f'img_green_mean_date{d}' in df.columns:
             df[f'NDBI_date{d}'] = (df[f'img_red_mean_date{d}'] - df[f'img_green_mean_date{d}']) / \
                                   (df[f'img_red_mean_date{d}'] + df[f'img_green_mean_date{d}'] + 1e-9)
 
+        # NDWI (Normalized Difference Water Index) - Indica presença de água
         if f'img_green_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
             df[f'NDWI_date{d}'] = (df[f'img_green_mean_date{d}'] - df[f'img_blue_mean_date{d}']) / \
                                   (df[f'img_green_mean_date{d}'] + df[f'img_blue_mean_date{d}'] + 1e-9)
-        # SAVI (Soil Adjusted Vegetation Index)
+
+        # SAVI (Soil Adjusted Vegetation Index) - Índice de vegetação ajustado para solo
         if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
-            L = 0.5  # Parameter for moderate vegetation
+            L = 0.5  # Parâmetro ajustável para solo (0.5 é comum para vegetação moderada)
             df[f'SAVI_date{d}'] = ((df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}']) * (1 + L)) / \
                                   (df[f'img_red_mean_date{d}'] + df[f'img_blue_mean_date{d}'] + L + 1e-9)
 
-        # EVI (Enhanced Vegetation Index)
-        if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns and f'img_green_mean_date{d}' in df.columns:
+        # EVI (Enhanced Vegetation Index) - Melhorado para detecção de vegetação densa
+        if all(f'img_{band}_mean_date{d}' in df.columns for band in ['red', 'blue', 'green']):
             df[f'EVI_date{d}'] = 2.5 * (df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}']) / \
                                 (df[f'img_red_mean_date{d}'] + 6 * df[f'img_blue_mean_date{d}'] - 7.5 * df[f'img_green_mean_date{d}'] + 1 + 1e-9)
 
+        # GCI (Green Chlorophyll Index) - Mede a quantidade de clorofila
+        if f'img_nir_mean_date{d}' in df.columns and f'img_green_mean_date{d}' in df.columns:
+            df[f'GCI_date{d}'] = (df[f'img_nir_mean_date{d}'] / df[f'img_green_mean_date{d}']) - 1
+
+        # NWI (Normalized Water Index) - Indica a presença de água
+        if f'img_green_mean_date{d}' in df.columns and f'img_red_mean_date{d}' in df.columns:
+            df[f'NWI_date{d}'] = (df[f'img_green_mean_date{d}'] - df[f'img_red_mean_date{d}']) / \
+                                 (df[f'img_green_mean_date{d}'] + df[f'img_red_mean_date{d}'] + 1e-9)
+
+        # ARVI (Atmospherically Resistant Vegetation Index) - Mais robusto contra distorções atmosféricas
+        if f'img_red_mean_date{d}' in df.columns and f'img_blue_mean_date{d}' in df.columns:
+            df[f'ARVI_date{d}'] = (df[f'img_red_mean_date{d}'] - (2 * df[f'img_blue_mean_date{d}'])) / \
+                                  (df[f'img_red_mean_date{d}'] + (2 * df[f'img_blue_mean_date{d}']) + 1e-9)
+
+        # VARI (Visible Atmospherically Resistant Index) - Índice de vegetação visível
+        if all(f'img_{band}_mean_date{d}' in df.columns for band in ['red', 'green', 'blue']):
+            df[f'VARI_date{d}'] = (df[f'img_green_mean_date{d}'] - df[f'img_red_mean_date{d}']) / \
+                                  (df[f'img_green_mean_date{d}'] + df[f'img_red_mean_date{d}'] - df[f'img_blue_mean_date{d}'] + 1e-9)
+
+        # MSAVI (Modified Soil-Adjusted Vegetation Index) - Reduz influência do solo
+        if f'img_red_mean_date{d}' in df.columns and f'img_nir_mean_date{d}' in df.columns:
+            df[f'MSAVI_date{d}'] = (2 * df[f'img_nir_mean_date{d}'] + 1 - 
+                                    np.sqrt((2 * df[f'img_nir_mean_date{d}'] + 1) ** 2 - 8 * (df[f'img_nir_mean_date{d}'] - df[f'img_red_mean_date{d}']))) / 2
+
+    # 📌 Adicionando diferenças temporais para capturar mudanças
+    for d in range(4):  # Comparando entre datas consecutivas
+        for index in ['NDVI', 'NDBI', 'NDWI', 'EVI', 'SAVI']:
+            if f'{index}_date{d+1}' in df.columns and f'{index}_date{d}' in df.columns:
+                df[f'{index}_change_{d}'] = df[f'{index}_date{d+1}'] - df[f'{index}_date{d}']        
+
 extract_spectral_features(train_df)  
 extract_spectral_features(test_df) 
-print("---------DEU CERTO AS ESPECTRAIS---------")
+
 
 # ----------------- Step 4: Convert Labels -----------------
 train_df["change_type"] = train_df["change_type"].map(change_type_map).astype(int)
@@ -250,8 +316,8 @@ def sort_dates_and_compute_differences(df):
         df[col] = pd.to_datetime(df[col], format='%d-%m-%Y', errors='coerce')
 
     # Print date columns BEFORE sorting
-    print("\n🔹 Before Sorting Dates & Status:")
-    print(df[date_cols + status_cols].head())
+    # print("\n🔹 Before Sorting Dates & Status:")
+    # print(df[date_cols + status_cols].head())
 
     # Sort dates and status labels per row
     def sort_dates(row):
@@ -276,8 +342,8 @@ def sort_dates_and_compute_differences(df):
     df[date_cols + status_cols] = df.apply(sort_dates, axis=1)
 
     # Print date columns AFTER sorting
-    print("\n🔹 After Sorting Dates & Status:")
-    print(df[date_cols + status_cols].head())
+    # print("\n🔹 After Sorting Dates & Status:")
+    # print(df[date_cols + status_cols].head())
 
     # Create new columns for the difference in days between consecutive dates
     for i in range(len(date_cols) - 1):
@@ -291,8 +357,8 @@ def sort_dates_and_compute_differences(df):
         df[diff_col].fillna(df[diff_col].median(), inplace=True)
 
     # Print computed date differences
-    print("\n🔹 Date Differences Computed:")
-    print(df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].head())
+    # print("\n🔹 Date Differences Computed:")
+    # print(df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].head())
     
     # Número de mudanças registradas
     df["change_frequency"] = df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].count(axis=1)
@@ -314,6 +380,34 @@ def sort_dates_and_compute_differences(df):
     # Aceleração da mudança (variação da velocidade das mudanças)
     df["change_acceleration"] = df["change_speed"].diff().fillna(0)
 
+    # Duração média entre mudanças
+    df["mean_duration_between_changes"] = df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].mean(axis=1)
+
+    # Máxima e mínima duração entre mudanças
+    df["max_duration_between_changes"] = df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].max(axis=1)
+    df["min_duration_between_changes"] = df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].min(axis=1)
+
+    # Razão entre maior e menor intervalo
+    df["change_duration_ratio"] = df["max_duration_between_changes"] / (df["min_duration_between_changes"] + 1e-9)
+
+    # Último intervalo de mudança
+    df["last_change_interval"] = df[f"{date_cols[-1]}_diff_days"]
+
+    # Desvio padrão das mudanças
+    df["change_std_dev"] = df[[f"{date_cols[i+1]}_diff_days" for i in range(len(date_cols) - 1)]].std(axis=1)
+
+    # Quantidade de mudanças no mesmo ano
+    df["num_changes_same_year"] = df[date_cols].apply(lambda x: len(set(x.dt.year.dropna())), axis=1)
+
+    # Picos de mudança
+    df["peak_change_period"] = df["max_duration_between_changes"] - df["min_duration_between_changes"]
+
+    # Mudanças no primeiro e último ano
+    df["early_vs_late_change"] = (df[f"{date_cols[1]}_diff_days"] - df[f"{date_cols[-2]}_diff_days"]).abs()
+
+    # Razão de estabilidade
+    df["stability_ratio"] = df["last_change_interval"] / (df["mean_duration_between_changes"] + 1e-9)
+
     # Taxa acumulada de mudanças ao longo do tempo
     df["cumulative_change_rate"] = df["change_rate"].cumsum()
 
@@ -334,7 +428,7 @@ def sort_dates_and_compute_differences(df):
 
 sort_dates_and_compute_differences(train_df)
 sort_dates_and_compute_differences(test_df)
-print("-------------THE END OF NEW FEATURES--------------")
+
 
 # ----------------- Step 6.1: Date Handling -----------------
 for col in date_cols:
